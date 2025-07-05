@@ -1,0 +1,22 @@
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+  config.vm.box = "bento/ubuntu-24.04"
+  config.vm.synced_folder "./synced_folder", "/root"
+
+  config.vm.provider :libvirt do |libvirt|
+    libvirt.memory = 1024
+    libvirt.cpus = 2
+  end
+
+  config.vm.define "vulnbox" do |app|
+    app.vm.hostname = "vulnbox.test"
+    app.vm.network :private_network, ip: "192.168.60.2"
+
+    app.vm.provision "shell", inline: <<-SHELL
+      echo "root:root" | chpasswd
+      sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+      systemctl restart ssh
+    SHELL
+  end
+end

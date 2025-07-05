@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+
+import cgi
+import os
+import sys
+import sqlite3
+import json
+from datetime import datetime, date
+from http.cookies import SimpleCookie
+
+# --- Configuration ---
+DB_PATH = "/var/db/db_invites.sqlite" # Path to your SQLite database
+# For local testing, you might want to change this to a temporary file
+# or a mock database path. E.g., DB_PATH = "test_invites.sqlite"
+
+# --- Helper Functions (Mimicking C++ behavior) ---
+
+def write_response_head():
+    """Prints the HTTP Content-Type header for JSON."""
+    print("Content-Type: application/json\n")
+    # A simple flag to prevent double printing headers if exit_error is called multiple times
+    sys._headers_sent = True
+
+def exit_error(message, status_code=500):
+    """Prints a JSON error response and exits the script."""
+    if not hasattr(sys, '_headers_sent'):
+        write_response_head() # Ensure headers are sent even on early errors
+    error_response = {"success": False, "error": message}
+    print(json.dumps(error_response))
+    sys.exit(status_code)
+
+def exit_wrong_method():
+    """Handles incorrect HTTP methods."""
+    exit_error("Method Not Allowed. Only GET is supported.", status_code=405)
+
+def get_cookie_value(cookie_string, name):
+    """Extracts a cookie value from the HTTP_COOKIE string."""
+    if not cookie_string:
+        return None
+    try:
+        cookies = SimpleCookie()
+        cookies.load(cookie_string)
+        morsel = cookies.get(name)
+        return morsel.value if morsel else None
+    except Exception as e:
+        # Log the error to stderr, but don't exit unless critical
+        sys.stderr.write(f"Error parsing cookies: {e}\n")
+        return None
+
+def auth_user(user_id):
+    """
+    Mimics the C++ auth_user function.
+    In the C++ code, it seems to just check if a user ID is present.
+    A real application would check against a database or session.
+    """
+
+    return bool(user_id)
+
+def db_log_error(message):
+    """Logs database errors to stderr (mimicking C++ db_log_error)."""
+    sys.stderr.write(f"Database error: {message}\n")
+
+def log_error(message):
+    """Logs general errors to stderr (mimicking C++ log_error)."""
+    sys.stderr.write(f"Application error: {message}\n")
+
+# --- Main Logic ---
+
+def main():
+    # Always print the header first in a CGI script
+    write_response_head()
+
+    # Initialize CGI FieldStorage to parse form data
+    form = cgi.FieldStorage()
+
+    # Get request method from environment variables
+    request_method = os.environ.get('REQUEST_METHOD', 'GET').upper()
+
+    # Check if the request method is GET
+    if request_method != 'GET':
+        exit_wrong_method()
+
+    # Get user ID from cookie
+    user_id = get_cookie_value(os.environ.get('HTTP_COOKIE'), 'user')
+    
+
+    # Authenticate user
+    if not auth_user(user_id):
+        exit_error("Unauthorized")
+
+    # --- Date Parameter Handling ---
+    date_filter = None
+    date_param = form.getvalue('date')
+    year_param = form.getvalue('year')
+    month_param = form.getvalue('month')
+    day_param = form.getvalue('day')
+
+    if date_param:
+        # If 'date' parameter is provided, validate its format
+        try:
+            # Assumes YYYY-MM-DD format based on common usage and C++ context
+            datetime.strptime(date_param, '%Y-%m-%d')
+            date_filter = date_param
+        except ValueError:
+            exit_error("Invalid date format for 'date' parameter. Expected YYYY-MM-DD.")
+    elif year_param and month_param and day_param:
+        # If 'year', 'month', 'day' are provided, combine and validate
+        try:
+            year = int(year_param)
+            month = int(month_param)
+            day = int(day_param)
+            # This will raise ValueError if date is invalid (e.g., Feb 30)
+            date_filter = date(year, month, day).strftime('%Y-%m-%d')
+        except ValueError:
+            exit_error("Incomplete or invalid date: 'year', 'month', and 'day' must be valid integers forming a real date.")
+    elif not date_param and (year_param or month_param or day_param):
+        # Partial date parameters without 'date'
+        exit_error("Incomplete date: either provide 'date' (YYYY-MM-DD) or 'year', 'month' and 'day' together.")
+    # If none of the above, date_filter remains None, meaning no date filter.
+
+    # --- Database Interaction ---
+    conn = None
+    try:
+        # Use 'with' statement for automatic connection closing
+        conn = sqlite3.connect(DB_PATH)
+        # Set row_factory to sqlite3.Row to access columns by name
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        if not date_filter:
+            # Query for all invites for the user
+            query = "SELECT id, user_from, title, description, date FROM invites WHERE user_to = ?;"
+            cursor.execute(query, (user_id,))
+        else:
+            # Query for invites for the user on a specific date
+            query = "SELECT id, user_from, title, description, date FROM invites WHERE user_to = ? AND date = ?;"
+            cursor.execute(query, (user_id, date_filter))
+
+        invites = []
+        # Iterate through fetched rows (mimics sqlite3_step and sqlite3_column_text loop)
+        for row in cursor.fetchall():
+            # Check for null columns as in the C++ code
+            # Note: In Python, `None` is falsy, so `not all(row)` works for checking if any are None
+            # We explicitly check the expected columns for clarity
+            if not all(row[col] for col in ['id', 'user_from', 'title', 'description', 'date']):
+                log_error("sqlite3_column_text returned unexpected null column(s)")
+                # C++ exits here, so we will too for consistency
+                exit_error("Internal database query error: unexpected null column(s) in result.")
+
+            invites.append({
+                "id": row['id'],
+                "from": row['user_from'],
+                "title": row['title'],
+                "description": row['description'],
+                "date": row['date']
+            })
+
+        # --- Output JSON Success Response ---
+        print(json.dumps({"invites": invites, "success": True}))
+
+    except sqlite3.Error as e:
+        # Catch SQLite specific errors
+        db_log_error(f"SQLite error: {e}")
+        exit_error("Internal database query error")
+    except Exception as e:
+        # Catch any other unexpected errors
+        log_error(f"An unexpected error occurred: {e}")
+        exit_error("An unexpected server error occurred.")
+    finally:
+        # Ensure the database connection is closed
+        if conn:
+            conn.close()
+
+# Entry point for the script
+if __name__ == '__main__':
+    main()

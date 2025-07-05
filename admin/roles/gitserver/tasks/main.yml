@@ -1,0 +1,149 @@
+- name: Install Git
+  ansible.builtin.apt:
+    name: git
+    state: present
+    update_cache: true
+
+- name: Set Git default branch globally
+  community.general.git_config:
+    name: init.defaultBranch
+    value: "{{ default_branch }}"
+    scope: system
+
+- name: Ensure Git group exists
+  ansible.builtin.group:
+    name: "{{ git_group }}"
+    state: present
+
+- name: Ensure git service account exists
+  ansible.builtin.user:
+    name: "{{ git_user }}"
+    group: "{{ git_group }}"
+    system: true
+    shell: /usr/bin/git-shell
+    create_home: false
+
+- name: Add developers to Git group
+  ansible.builtin.user:
+    name: "{{ item.username }}"
+    groups: "{{ git_group }}"
+    append: true
+  loop: "{{ users }}"
+
+- name: Create top-level Git directory
+  ansible.builtin.file:
+    path: "{{ git_repo_path }}"
+    state: directory
+    owner: "{{ git_user }}"
+    group: "{{ git_group }}"
+    mode: "2775"
+
+- name: Locate each project directory to import
+  ansible.builtin.find:
+    paths: "{{ git_source_path }}"
+    file_type: directory
+    depth: 1
+  register: source_dirs
+
+- name: Exclude specified directories
+  ansible.builtin.set_fact:
+    filtered_source_dirs: >-
+      {{ source_dirs.files
+         | rejectattr('path', 'search', '/' + item + '$')
+         | list }}
+  loop: "{{ excluded_git_dirs }}"
+  loop_control:
+    label: "{{ item }}"
+  run_once: true
+
+- name: Initialise bare repos
+  ansible.builtin.command:
+    cmd: git init --bare --shared=group "{{ git_repo_path }}/{{ item.path | basename }}.git"
+    creates: "{{ git_repo_path }}/{{ item.path | basename }}.git/config"
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  become_user: "{{ git_user }}"
+
+- name: Protect permissions on bare repositories
+  ansible.builtin.file:
+    path: "{{ git_repo_path }}/{{ item.path | basename }}.git"
+    owner: "{{ git_user }}"
+    group: "{{ git_group }}"
+    mode: "2775"
+    recurse: true
+  loop: "{{ filtered_source_dirs }}"
+
+- name: "Create temporary directories for seeding"
+  ansible.builtin.file:
+    path: "/tmp/git-seed-{{ item.path | basename }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: "Copy source to temporary directories (as root)"
+  ansible.builtin.copy:
+    src: "{{ item.path }}/"
+    dest: "/tmp/git-seed-{{ item.path | basename }}/"
+    remote_src: true
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: "Set ownership for git user on temporary directories"
+  ansible.builtin.file:
+    path: "/tmp/git-seed-{{ item.path | basename }}"
+    owner: "{{ git_user }}"
+    group: "{{ git_group }}"
+    recurse: true
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: "Commit and push initial code for each repository"
+  ansible.builtin.shell: |
+    set -e
+    cd "/tmp/git-seed-{{ item.path | basename }}"
+    git init -b "{{ default_branch }}"
+    git config user.email "admin@example.com"
+    git config user.name  "Git Admin"
+    git remote add origin "{{ git_repo_path }}/{{ item.path | basename }}.git"
+    git add .
+    git commit --allow-empty -m "Initial commit"
+    git push --set-upstream origin "{{ default_branch }}"
+  args:
+    executable: /bin/bash
+    creates: "{{ git_repo_path }}/{{ item.path | basename }}.git/refs/heads/{{ default_branch }}"
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  become_user: "{{ git_user }}"
+
+- name: "Clean up temporary directories"
+  ansible.builtin.file:
+    path: "/tmp/git-seed-{{ item.path | basename }}"
+    state: absent
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Mark each repository as a safe directory system-wide
+  community.general.git_config:
+    name: safe.directory
+    value: "{{ git_repo_path }}/{{ item.path | basename }}.git"
+    scope: system
+    add_mode: add
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}.git"
+
+
+- name: Display clone commands
+  ansible.builtin.debug:
+    msg: "git clone ssh://vulnbox{{ git_repo_path }}/{{ item.path | basename }}.git"
+  loop: "{{ filtered_source_dirs }}"
+  loop_control:
+    label: "{{ item.path | basename }}.git"
+  run_once: true

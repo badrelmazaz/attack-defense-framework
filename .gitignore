@@ -1,0 +1,8 @@
+.venv/
+tmp/
+.vagrant/
+.vscode/
+digest.txt
+requirements.txt
+.idea/
+.vscode/

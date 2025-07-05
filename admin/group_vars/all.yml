@@ -1,0 +1,22 @@
+users:
+  - name: Badr El Mazaz
+    username: belmazaz
+  - name: Fabrizio Pardini
+    username: fpardini
+  - name: Filippo Borgognoni
+    username: fborgognoni
+  - name: Katia Corradini
+    username: kcorradini
+  - name: Nicola Spadoni
+    username: nspadoni
+  - name: Alessandro Zingaretti
+    username: azingaretti
+
+
+git_repo_path: /srv/git
+git_source_path: /root
+git_group: git
+git_user: git
+default_branch: main
+excluded_git_dirs:
+  - backup
