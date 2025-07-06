@@ -23,6 +23,7 @@ Update `inventory.yml` with your `ansible_user`, `ansible_ssh_pass`, and target 
 
 ```bash
 ansible-playbook playbooks/users.yml
+ansible-playbook playbooks/docker.yml
 ansible-playbook playbooks/gitserver.yml
 ````
 

@@ -20,3 +20,5 @@ git_user: git
 default_branch: main
 excluded_git_dirs:
   - backup
+deploy_branch: main
+working_dir_base: /opt/deploy

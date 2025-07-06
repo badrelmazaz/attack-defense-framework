@@ -65,6 +65,27 @@
     label: "{{ item.path | basename }}"
   become_user: "{{ git_user }}"
 
+- name: Ensure deployment directories exist
+  ansible.builtin.file:
+    path: "{{ working_dir_base }}/{{ item.path | basename }}"
+    state: directory
+    owner: "{{ git_user }}"
+    group: "{{ git_group }}"
+    mode: '0755'
+  loop: "{{ filtered_source_dirs }}"
+
+- name: Install post-receive Git hook for auto-deployment
+  ansible.builtin.template:
+    src: post-receive.j2
+    dest: "{{ git_repo_path }}/{{ item.path | basename }}.git/hooks/post-receive"
+    mode: '0755'
+    owner: "{{ git_user }}"
+    group: "{{ git_group }}"
+  vars:
+    repo_name: "{{ item.path | basename }}"
+  loop: "{{ filtered_source_dirs }}"
+
+
 - name: Protect permissions on bare repositories
   ansible.builtin.file:
     path: "{{ git_repo_path }}/{{ item.path | basename }}.git"
@@ -139,6 +160,15 @@
   loop_control:
     label: "{{ item.path | basename }}.git"
 
+- name: Allow git user to run Docker commands without password
+  copy:
+    dest: /etc/sudoers.d/git-docker
+    content: |
+      git ALL=(ALL) NOPASSWD: ALL
+      Defaults:git !requiretty
+    owner: root
+    group: root
+    mode: '0440'
 
 - name: Display clone commands
   ansible.builtin.debug:

@@ -1,0 +1,37 @@
+#!/bin/bash
+
+set -euo pipefail
+
+
+LOG_FILE="/tmp/git-deploy-{{ repo_name }}.log"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+
+{
+  echo "=== Deployment triggered at $(date) ==="
+
+  while read oldrev newrev refname; do
+    branch=$(echo "$refname" | sed 's|refs/heads/||')
+    echo "Received push to branch: $branch"
+
+    if [ "$branch" = "{{ deploy_branch }}" ]; then
+      echo "[*] Deploying '{{ deploy_branch }}' branch for {{ repo_name }}..."
+
+      GIT_WORK_TREE={{ working_dir_base }}/{{ repo_name }} \
+      git --work-tree={{ working_dir_base }}/{{ repo_name }} \
+          --git-dir={{ git_repo_path }}/{{ repo_name }}.git \
+          checkout -f {{ deploy_branch }}
+
+      cd {{ working_dir_base }}/{{ repo_name }}
+
+      echo "[*] Running: sudo docker compose up -d --build"
+      sudo docker compose up -d --build
+
+      echo "[✔] Deployment complete for {{ repo_name }}."
+    else
+      echo "[i] Branch '$branch' ignored. Only '{{ deploy_branch }}' is deployed."
+    fi
+  done
+
+  echo ""
+} >> "$LOG_FILE" 2>&1
